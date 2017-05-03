@@ -11,7 +11,7 @@ def _s(o1, o2):
 
 def test_least_squares():
     """ This test will construct second order cone constraints """
-    prob = problems.least_squares(10, 5)
+    prob = problems.least_squares(10, 5)[1]
     data = prob.get_problem_data(cp.SCS)
     out = newton_admm(data, data['dims'])
     cvx_out = prob.solve()
@@ -22,7 +22,7 @@ def test_least_squares():
 
 def test_lp():
     """ This test will construct equality, inequality, and second order cone constraints """
-    prob = problems.lp(30, 60)
+    prob = problems.lp(30, 60)[1]
     data = prob.get_problem_data(cp.SCS)
     out = newton_admm(data, data['dims'])
     cvx_out = prob.solve()
@@ -33,7 +33,7 @@ def test_lp():
 
 def test_portfolio_opt():
     """ This test will construct equality, inequality, and second order cone constraints """
-    prob = problems.portfolio_opt(10)
+    prob = problems.portfolio_opt(10)[1]
     data = prob.get_problem_data(cp.SCS)
     out = newton_admm(data, data['dims'])
     cvx_out = prob.solve()
@@ -44,7 +44,7 @@ def test_portfolio_opt():
 
 def test_logistic_regression():
     """ This test will construct inequality, and exponential cone constraints """
-    prob = problems.logistic_regression(5, 2, 1.0)
+    prob = problems.logistic_regression(5, 2, 1.0)[1]
     data = prob.get_problem_data(cp.SCS)
     out = newton_admm(data, data['dims'])
     cvx_out = prob.solve()
@@ -63,7 +63,7 @@ def test_PSD():
 
 def test_robust_pca():
     """ This test will construct positive semi-definite cone constraints """
-    prob = problems.robust_pca(5, 0.5)
+    prob = problems.robust_pca(5, 0.5)[1]
     data = prob.get_problem_data(cp.SCS)
     # solve the problem with ADMM instead for better accuracy
     out0 = newton_admm(data, data['dims'], admm_maxiters=4000, maxiters=4000)

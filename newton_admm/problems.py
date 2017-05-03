@@ -10,7 +10,7 @@ def least_squares(m, n):
     b = A.dot(_x)
 
     x = cp.Variable(n)
-    return cp.Problem(cp.Minimize(cp.sum_squares(A * x - b) + cp.norm(x, 2)))
+    return (x, cp.Problem(cp.Minimize(cp.sum_squares(A * x - b) + cp.norm(x, 2))))
 
 
 def lp(m, n):
@@ -23,7 +23,7 @@ def lp(m, n):
     b1 = np.zeros(n)
 
     # equality constraints
-    A2 = np.random.randn(m, n)
+    A2 = np.random.randn(m, n) 
     b2 = A2.dot(_x)
 
     # objective
@@ -33,9 +33,21 @@ def lp(m, n):
     lam[idxes] = 0
     c = np.ravel(-A2.T.dot(nu) + lam)
 
+    # create standard form cone parameters
+    A = np.vstack([A1,A2,-A2])
+    b = np.vstack([b1[:,None], b2[:,None], -b2[:,None]]).ravel()
+
     x = cp.Variable(n)
-    return cp.Problem(cp.Minimize(c.T * x + cp.sum_squares(x)),
-                      [b1 - A1 * x >= 0, A2 * x == b2])
+    return (x, cp.Problem(cp.Minimize(c.T * x),
+                          [b1 - A1 * x >= 0, A2 * x == b2]), {
+        'A' : A, 
+        'b' : b,
+        'c' : c, 
+        'dims' : {
+            'l' : 2*m+n
+        },
+        'beta_from_x' : lambda x: x
+    })
 
 
 def portfolio_opt(p):
@@ -43,13 +55,39 @@ def portfolio_opt(p):
     temp = np.random.randn(p, p)
     Sigma = temp.T.dot(temp)
 
+
     Sigma_sqrt = sp.linalg.sqrtm(Sigma)
     o = np.ones((p, 1))
 
-    # Solve by ECOS.
+    # Create standard form cone problem
+    Zp1 = np.zeros((p,1))
+    
+    # setup for cone problem
+    c = np.vstack([Zp1, np.array([[1.0]])]).ravel()
+
+    G1 = sp.linalg.block_diag(2.0*Sigma_sqrt, -1.0)
+    q = np.vstack([Zp1, np.array([[1.0]])])
+    G2 = np.hstack([o.T, np.array([[0.0]])])
+    G3 = np.hstack([-o.T, np.array([[0.0]])])
+
+    h = np.vstack([Zp1, np.array([[1.0]])])
+    z = 1.0
+
+    A = np.vstack([G2, G3, -q.T, -G1 ])
+    b = np.vstack([1.0, -1.0, np.array([[z]]), h]).ravel()
+
     betahat = cp.Variable(p)
-    return cp.Problem(cp.Minimize(cp.quad_form(betahat, Sigma)),
-                      [o.T * betahat == 1])
+    return (betahat, cp.Problem(cp.Minimize(cp.quad_form(betahat, Sigma)),
+                                [o.T * betahat == 1]), {
+        'A' : A, 
+        'b' : b,
+        'c' : c, 
+        'dims' : {
+            'l' : 2,
+            'q' : [p+2]
+        },
+        'beta_from_x' : lambda x: x[:p]
+    })
 
 
 def logistic_regression(N, p, suppfrac):
@@ -91,7 +129,8 @@ def logistic_regression(N, p, suppfrac):
     betahat = cp.Variable(p)
     logloss = sum(cp.log_sum_exp(
         cp.hstack(0, y[i] * X[i, :] * betahat)) for i in range(N))
-    return cp.Problem(cp.Minimize(logloss + lam * cp.norm(betahat, 1)))
+    return (betahat, 
+            cp.Problem(cp.Minimize(logloss + lam * cp.norm(betahat, 1))))
 
 
 def robust_pca(p, suppfrac):
