@@ -1,6 +1,7 @@
 # Newton ADMM • [![Build Status][travis-image]][travis] [![License][license-image]][license]
 
-*An implementation of the Newton ADMM algorithm for solving cone problems.*
+*An implementation of the Newton ADMM algorithm for solving cone problems.
+Created by [Eric Wong](https://riceric22.github.io/), [Alnur Ali](http://www.alnurali.com/), and [Zico Kolter](http://zicokolter.com/)*
 
 [travis-image]: https://travis-ci.org/locuslab/newton_admm.png?branch=master
 [travis]: http://travis-ci.org/locuslab/newton_admm
