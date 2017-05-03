@@ -165,33 +165,11 @@ def _setup_benchmark():
 
 def error_from_x(x, benchmark, m):
     """ From x, return beta """
-    # prob, beta, betastar = benchmark
-    # scs_output = {
-    #     "info" : {
-    #         'status': 'Solved', 
-    #         'statusVal': 1, 
-    #         'resPri': 1, 
-    #         'resInfeas': 1, 
-    #         'solveTime': 1, 
-    #         'relGap': 1, 
-    #         'iter': 1, 
-    #         'dobj': 1, 
-    #         'pobj': 1, 
-    #         'setupTime': 1, 
-    #         'resUnbdd': 1, 
-    #         'resDual': 1},
-    #     "y" : np.zeros(m),
-    #     "x" : x,
-    #     "s" : np.zeros(m)
-    # }
-    # prob.unpack_results(cp.SCS, scs_output)
     beta_from_x, betastar = benchmark
-    return np.linalg.norm(beta_from_x(x) - betastar)
-    # if isinstance(beta, cp.Variable): 
-    #     return np.linalg.norm(beta.value - betastar)
-    # else: 
-    #     return np.sum(np.linalg.norm(b1.value-b2) 
-    #                   for b1, b2 in zip(beta, betastar))
+    if isinstance(betastar, (tuple, list)): 
+        return sum(np.linalg.norm(a-b) for a,b in zip(beta_from_x(x), betastar))
+    else: 
+        return np.linalg.norm(beta_from_x(x) - betastar)
 
 def update_benchmark(b, u, v, c, t, zerotol, benchmark, m): 
     n = len(c)
@@ -215,7 +193,7 @@ def J_matvec(x, n, m, k, d, ridge, IplusQ, J_cones, cone_lengths):
     for K_op, K_len in zip(J_cones, cone_lengths): 
         out[k+n+i:k+n+i+K_len] = -K_op(x[n+i:n+i+K_len]) + (1+ridge)*x[k+n+i:k+n+i+K_len] + K_op(x[2*k+n+i:2*k+n+i+K_len])
         i += K_len
-
+    assert(m==i)
     out[k+n+m] = -d*x[n+m] + (1+ridge)*x[k+n+m] + d*x[2*k+n+m]
     out[2*k:] = x[:k] - x[k:-k]
     return out
@@ -257,7 +235,7 @@ def newton_admm(data, cone, maxiters=100, admm_maxiters=1,
     
     # save benchmarks in a dictionary   
     b = _setup_benchmark()
-    extra_iters = 1
+    extra_iters = 0
 
     for iters in range(admm_maxiters):
         if benchmark is not None: 
@@ -267,8 +245,6 @@ def newton_admm(data, cone, maxiters=100, admm_maxiters=1,
         utilde = solve_IplusQ(u + v)
         u = _proj_onto_C(utilde - v, cone, n)
         v = v - utilde + u
-        # print("#0", utilde, u)
-        # assert False
 
         if benchmark is not None: 
             update_benchmark(b, u, v, c, time() - start_time, zerotol, benchmark, m)
@@ -313,7 +289,7 @@ def newton_admm(data, cone, maxiters=100, admm_maxiters=1,
         d = np.array(utilde[-1] - v[-1] >=
                      0.0).astype(np.float64).reshape(1, 1)
         J_cones, cone_lengths = _J_onto_Kstar((utilde - v)[n:-1], cone)
-        # print("#1", u)
+
         J_lo = sla.LinearOperator((3 * k, 3 * k), matvec=
             lambda x: J_matvec(x, n, m, k, d, ridge, IplusQ, J_cones, cone_lengths))
         # approximately solve then newton step
@@ -322,8 +298,7 @@ def newton_admm(data, cone, maxiters=100, admm_maxiters=1,
                                M=M_lo,
                                tol=1e-12,
                                maxiter=gmres_maxiters(iters) + extra_iters)
-        # print("#2")
-        # assert False
+
         dutilde, du, dv = dall[0:k], dall[k:2 * k], dall[2 * k:]
 
         # backtracking line search

@@ -90,6 +90,34 @@ def portfolio_opt(p):
     })
 
 
+def cvxpy_beta_from_x(prob, beta, m): 
+    def beta_from_x(x):
+        """ From x, return beta """
+        scs_output = {
+            "info" : {
+                'status': 'Solved', 
+                'statusVal': 1, 
+                'resPri': 1, 
+                'resInfeas': 1, 
+                'solveTime': 1, 
+                'relGap': 1, 
+                'iter': 1, 
+                'dobj': 1, 
+                'pobj': 1, 
+                'setupTime': 1, 
+                'resUnbdd': 1, 
+                'resDual': 1},
+            "y" : np.zeros(m),
+            "x" : x,
+            "s" : np.zeros(m)
+        }
+        prob.unpack_results(cp.SCS, scs_output)
+        if isinstance(beta, cp.Variable):
+            return beta.value
+        else:
+            return tuple(b.value for b in beta)
+    return beta_from_x
+
 def logistic_regression(N, p, suppfrac):
     """ Create a logistic regression problem with N examples, p dimensions,
     and at most suppfrac of the optimal solution to be non-zero. """
@@ -129,8 +157,11 @@ def logistic_regression(N, p, suppfrac):
     betahat = cp.Variable(p)
     logloss = sum(cp.log_sum_exp(
         cp.hstack(0, y[i] * X[i, :] * betahat)) for i in range(N))
-    return (betahat, 
-            cp.Problem(cp.Minimize(logloss + lam * cp.norm(betahat, 1))))
+    prob = cp.Problem(cp.Minimize(logloss + lam * cp.norm(betahat, 1)))
+
+    data = prob.get_problem_data(cp.SCS)
+    data['beta_from_x'] = cvxpy_beta_from_x(prob, betahat, data['A'].shape[0])
+    return (betahat, prob, data)
 
 
 def robust_pca(p, suppfrac):
@@ -162,5 +193,9 @@ def robust_pca(p, suppfrac):
 
     Lhat = cp.Variable(p, p)
     Mhat = cp.Variable(p, p)
-    return cp.Problem(cp.Minimize(cp.norm(Lhat, "nuc") + cp.sum_squares(Lhat)),
+    prob = cp.Problem(cp.Minimize(cp.norm(Lhat, "nuc") + cp.sum_squares(Lhat)),
                       [cp.norm(Mhat, 1) <= lam, Lhat + Mhat == X])
+
+    data = prob.get_problem_data(cp.SCS)
+    data['beta_from_x'] = cvxpy_beta_from_x(prob, (Lhat, Mhat), data['A'].shape[0])
+    return ((Lhat, Mhat), prob, data)
