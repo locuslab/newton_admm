@@ -49,14 +49,13 @@ def multiply_diag(A, D):
     return out
 
 
-def P(v_X):
-    X = vec_to_X(v_X)
-    n = X.shape[0]
-    # perform scaling
+def P(v_X, precompute):
+    n = vec_to_X(v_X).shape[0]
+    # # perform scaling
     _i = tuple(range(n))
-    X[_i, _i] *= _sqrt2
+    # X[_i, _i] *= _sqrt2
 
-    Lam, U = np.linalg.eigh(X)
+    Lam, U = precompute
     idx = np.argsort(Lam)
     Lam = Lam[idx]
     U = U[:, idx]
@@ -96,15 +95,15 @@ def dU_dL_dX(Lam, U):
     return dU_dX, dL_dX
 
 
-def J(v_X):
-    X = vec_to_X(v_X)
-    n = X.shape[0]
+def J(v_X, precompute):
+    n = vec_to_X(v_X).shape[0]
 
     # perform scaling
     _i = tuple(range(n))
-    X[_i, _i] *= _sqrt2
+    # X[_i, _i] *= _sqrt2
 
-    Lam, U = np.linalg.eigh(X)
+    # Lam, U = np.linalg.eigh(X)
+    Lam, U = precompute
     idx = np.argsort(Lam)
     Lam = Lam[idx]
     U = U[:, idx]

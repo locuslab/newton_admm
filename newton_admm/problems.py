@@ -164,7 +164,138 @@ def logistic_regression(N, p, suppfrac):
     return (betahat, prob, data)
 
 
-def robust_pca(p, suppfrac):
+def robust_pca_alnur(N, suppfrac, lam=1.0): 
+    """ Create a robust PCA problem with a low rank matrix """
+
+    # First, create a rank = "rk" matrix:
+    # N = 10 # 500 # 300                     # Num examples (i.e., rows in X).
+    p = N # 1000 # 600                    # Num features (i.e., cols of X).
+    suppfrac = 0.1 # 0.1 # 0.01 # 0.05                  # Fraction of "p" that should be nonzero.
+
+    K = ["nno", "nno", "nno", "nno", "nno", "psd"]       # Cones that each block of u_y belong to.  "nno" == nonnegative orthant, "soc" == second order cone, "exp" == exp cone, psd" == PSD cone.
+    Klens = [N*p, N*p, 1, N*p, N*p, (N+p)**2]             # Length of each block of u_y.
+    Kpsd_sizes = [[N, N, p, p]]                      # For each Kpsd constraint, we require a list of (in the following order):
+                                           # num. rows in the upper left block
+                                           # num. cols in the upper left block
+                                           # num. cols in the upper right block
+                                           # num. rows in the lower right block.
+                                           # Create data.
+
+    # First, create a rank = "rk" matrix:
+    assert N == p                                  # This approach to creating a low-rank matrix requires N == p
+    rk = int(round(N*0.5))
+    assert rk <= min(N,p)
+    Lstar = np.zeros((N,p))
+    for i in range(rk):
+        vi = np.random.randn(N,1)
+        mati = vi.dot(vi.T)
+        Lstar += mati
+        
+    # Then, create a sparse matrix:
+    Mstar = np.random.randn(N,p)
+    Mstar_vec = Mstar.T.ravel()
+
+    nnz = int(np.floor((1.0-suppfrac)*N*p))        # Num. nonzeros
+    assert nnz <= N*p
+    idxes = np.random.randint(0, N*p, nnz)
+    Mstar_vec[idxes] = 0
+    # print "Number of zeros in solution is %d/%d entries." % (len(idxes), N*p)
+
+    Mstar = np.reshape(Mstar_vec, (N,p)).T
+
+    # Finally, sum the two matrices "L" and "M":
+    X = Lstar + Mstar
+
+    # Solve by cvxpy.
+    vec = lambda matin: matin.T.ravel()
+
+    zNp1 = np.zeros((N*p,1))
+    ZNpNsq = np.zeros((N*p,N**2))
+    ZNppsq = np.zeros((N*p,p**2))
+    ZNpNp = np.zeros((N*p,N*p))
+    z1Nsq = np.zeros((1,N**2))
+    z1psq = np.zeros((1,p**2))
+    z1Np = zNp1.T
+    zNpluspsq1 = np.zeros(((N+p)**2,1))
+    ZNpluspsqNp = np.zeros(((N+p)**2,N*p))
+
+    o1Np = np.ones((1,N*p))
+
+    IN = np.eye(N)
+    Ip = np.eye(p)
+    INp = np.eye(N*p)
+
+    c = np.vstack([0.5*vec(IN)[:,None], 0.5*vec(Ip)[:,None], zNp1, zNp1, zNp1]).ravel()
+
+    def create_zeros_mat_except_ij_one(nr, nc, i, j):
+        mat = np.zeros((nr,nc))
+        mat[i,j] = 1
+        return mat
+
+    row_offset = 0
+    col_offset = 0
+    G_W1_vecs = [vec(create_zeros_mat_except_ij_one(N+p, N+p, row_offset + i, col_offset + j))[:,None] 
+                 for j in range(N) for i in range(N)]
+
+    row_offset = N
+    col_offset = N
+    G_W2_vecs = [vec(create_zeros_mat_except_ij_one(N+p, N+p, row_offset + i, col_offset + j))[:,None] 
+                 for j in range(p) for i in range(p)]
+
+
+    row_offset = 0
+    col_offset = N
+    G_L_vecs = [vec(create_zeros_mat_except_ij_one(N+p, N+p, row_offset + i, col_offset + j) \
+                    + create_zeros_mat_except_ij_one(N+p, N+p, row_offset + i, col_offset + j).T)[:,None] 
+                for j in range(p) for i in range(N)]
+
+    bot = np.hstack([np.hstack(G_W1_vecs), np.hstack(G_W2_vecs), ZNpluspsqNp, np.hstack(G_L_vecs), ZNpluspsqNp])
+
+    # get it into SCS problem form
+    mask = np.zeros((N+p,N+p), dtype=np.bool)
+    ind = np.tril_indices(N+p)
+    mask[ind] = True
+    mask = vec(mask)
+    bot = bot[mask]
+    zNpluspsq1 = zNpluspsq1[mask]
+
+    A = np.bmat([[ZNpNsq, ZNppsq, -INp, ZNpNp, -INp],
+                 [ZNpNsq, ZNppsq, -INp, ZNpNp, INp],
+                 [z1Nsq, z1psq, o1Np, z1Np, z1Np],
+                 [ZNpNsq, ZNppsq, ZNpNp, INp, INp],
+                 [ZNpNsq, ZNppsq, ZNpNp, -INp, -INp],
+                 [-bot]])
+       
+    b = np.vstack([zNp1, zNp1, lam, vec(X)[:,None], -vec(X)[:,None], zNpluspsq1]).ravel()
+
+    m = A.shape[0]
+    # assert m == N*p + N*p + 1 + N*p + N*p + (N+p)**2
+    # assert m == b.shape[0]
+
+    n = A.shape[1]
+    # assert n == N**2 + p**2 + N*p + N*p + N*p
+
+    cumsums = np.cumsum([0] + Klens)
+    Kidxes = [range(cumsums[i], cumsums[i+1]) for i in range(len(cumsums)-1)]
+
+    Lstar_vec = vec(Lstar)
+    Mstar_vec = vec(Mstar)
+
+    print(A.shape, 4*N*p+1, N+p)
+
+    return (None, None, {
+        'A' : A, 
+        'b' : b,
+        'c' : c, 
+        'dims' : {
+            'l' : 4*N*p+1,
+            's' : [N+p]
+        },
+        'beta_from_x' : lambda x: x[:N*N+p*p]
+    })
+
+
+def robust_pca(p, suppfrac, lam=1.0):
     """ Create a robust PCA problem with a low rank matrix """
 
     # First, create a rank = "rk" matrix:
@@ -189,11 +320,9 @@ def robust_pca(p, suppfrac):
     # Finally, sum the two matrices "L" and "M":
     X = Lstar + Mstar
 
-    lam = 1.0
-
     Lhat = cp.Variable(p, p)
     Mhat = cp.Variable(p, p)
-    prob = cp.Problem(cp.Minimize(cp.norm(Lhat, "nuc") + cp.sum_squares(Lhat)),
+    prob = cp.Problem(cp.Minimize(cp.norm(Lhat, "nuc")),
                       [cp.norm(Mhat, 1) <= lam, Lhat + Mhat == X])
 
     data = prob.get_problem_data(cp.SCS)

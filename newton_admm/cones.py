@@ -156,7 +156,7 @@ def J_ed(x, n_cones):
     return block_diag(Js0, arrtype=sla.LinearOperator)
 
 
-def P_s(x, c_lens):
+def P_s(x, c_lens, precompute):
     """ Projection onto the positive semidefinite cone. 
 
     Since SCS assumes an off-diagonal scaling of sqrt(2), scale the diagonal
@@ -165,21 +165,23 @@ def P_s(x, c_lens):
      """
     i = 0
     out = np.zeros(len(x))
-    for n in c_lens:
+    assert len(c_lens) == len(precompute)
+    for n, p in zip(c_lens, precompute):
         n0 = n * (n + 1) // 2
         l = [0]
-        out[i:i + n0] = PSD.P(x[i:i + n0])
+        out[i:i + n0] = PSD.P(x[i:i + n0], p)
         i += n0
     assert i == len(x)
     return out
 
 
-def J_s(x, c_lens):
+def J_s(x, c_lens, precompute):
     i = 0
     out = []
-    for n in c_lens:
+    assert len(c_lens) == len(precompute)
+    for n,p in zip(c_lens, precompute):
         n0 = n * (n + 1) // 2
-        J = PSD.J(x[i:i + n0])
+        J = PSD.J(x[i:i + n0], p)
         out.append(sla.aslinearoperator(J))
         i += n0
     assert i == len(x)
