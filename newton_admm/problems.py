@@ -322,7 +322,8 @@ def robust_pca(p, suppfrac, lam=1.0):
 
     Lhat = cp.Variable(p, p)
     Mhat = cp.Variable(p, p)
-    prob = cp.Problem(cp.Minimize(cp.norm(Lhat, "nuc")),
+    prob = cp.Problem(cp.Minimize(cp.norm(Lhat, "nuc") + cp.sum_squares(Lhat)
+        + cp.sum_squares(Mhat)),
                       [cp.norm(Mhat, 1) <= lam, Lhat + Mhat == X])
 
     data = prob.get_problem_data(cp.SCS)

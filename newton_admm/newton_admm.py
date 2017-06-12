@@ -2,12 +2,15 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as sla
 import numpy as np
 from . import cones as C
+from . import PSD
 from scipy.sparse.linalg import aslinearoperator as aslo
 import scipy
 from block import block, block_diag
 
 import cvxpy as cp
 from time import time
+
+_cones = ['f', 'l', 'q', 's', 'ep', 'ed', 'p']
 
 def _unpack(data):
     return data['A'], data['b'], data['c']
@@ -22,8 +25,17 @@ def _proj_onto_C(x, cone, n):
     return out
 
 
-_cones = ['f', 'l', 'q', 's', 'ep', 'ed', 'p']
-
+def precompute(x, cone):
+    if 's' in cone and len(cone['s']) > 0:
+        out = []
+        i = 0
+        for c in _cones:
+            if _cone_exists(c, cone): 
+                c_len = _cone_len(c, cone)
+                if c == 's': 
+                    out.append(PSD.decompose(x[i:i+c_len]))
+                i += c_len
+        cone['s_precompute'] = out
 
 def _proj_onto_Kstar(x, cone):
     assert(x.ndim == 1)
@@ -84,7 +96,7 @@ def _dual_cone_proj(x, c, cone):
         return C.P_q(x, cone[c])
     if c == 's':
         # psd cone, self dual
-        return C.P_s(x, cone[c])
+        return C.P_s(x, cone[c], cone['s_precompute'])
     if c == 'ep':
         # primal exponential cone, dual exponential cone
         return C.P_ed(x, cone[c])
@@ -98,7 +110,7 @@ def _dual_cone_proj(x, c, cone):
     raise NotImplementedError
 
 
-def _J_onto_Kstar(x, cone):
+def J_onto_Kstar(x, cone):
     assert(x.ndim == 1)
     J_cones = []
     i = 0
@@ -107,14 +119,14 @@ def _J_onto_Kstar(x, cone):
     for c in existing_cones:
         if _cone_exists(c, cone):
             c_len = _cone_len(c, cone)
-            J_cones.append(_dual_cone_J(x[i:i + c_len], c, cone))
+            J_cones.append(dual_cone_J(x[i:i + c_len], c, cone))
             i += c_len
             cone_lengths.append(c_len)
     assert i == len(x)
     return J_cones, cone_lengths
 
 
-def _dual_cone_J(x, c, cone):
+def dual_cone_J(x, c, cone):
     """ Given a point x, return the Jacobian of the cone projection onto c """
     if c == 'f':
         return C.J_f(x)
@@ -123,7 +135,12 @@ def _dual_cone_J(x, c, cone):
     if c == 'q':
         return C.J_q(x, cone[c])
     if c == 's':
-        return C.J_s(x, cone[c])
+        # return lambda dv_X: PSD.J_fast(cone['s_precompute'][0], dv_X)
+        # dv_X = np.random.randn(len(x))
+        # a = C.J_s(x, cone[c], cone['s_precompute'])(dv_X)
+        # b = PSD.J_fast(cone['s_precompute'][0], dv_X)
+        # print(np.abs(a-b).max())
+        return C.J_s(x, cone[c], cone['s_precompute'])
     # reminder: these are intentionally switched, since this is onto the dual
     # cone of c, so projection onto dual of ep is ed
     if c == 'ep':
@@ -159,7 +176,8 @@ def _setup_benchmark():
     b = {
         'time' : [], 
         'fval' : [], 
-        'error' : []
+        'error' : [],
+        'iters' : []
     }
     return b
 
@@ -171,12 +189,13 @@ def error_from_x(x, benchmark, m):
     else: 
         return np.linalg.norm(beta_from_x(x) - betastar)
 
-def update_benchmark(b, u, v, c, t, zerotol, benchmark, m): 
+def update_benchmark(b, u, v, c, t, zerotol, benchmark, m, iters): 
     n = len(c)
     b['time'].append(t)
     x, _, _ = _extract_solution(u, v, n, zerotol)
     b['fval'].append(c.T.dot(x))
     b['error'].append(error_from_x(x, benchmark, m))
+    b['iters'].append(iters)
 
 def M_matvec(v, solve_IplusQ, k):
     out = np.zeros(3 * k)
@@ -236,21 +255,23 @@ def newton_admm(data, cone, maxiters=100, admm_maxiters=1,
     # save benchmarks in a dictionary   
     b = _setup_benchmark()
     extra_iters = 0
-
     for iters in range(admm_maxiters):
         if benchmark is not None: 
             start_time = time()
         
         # do admm step
         utilde = solve_IplusQ(u + v)
+        precompute((utilde-v)[n:-1], cone)
         u = _proj_onto_C(utilde - v, cone, n)
         v = v - utilde + u
 
         if benchmark is not None: 
-            update_benchmark(b, u, v, c, time() - start_time, zerotol, benchmark, m)
+            update_benchmark(b, u, v, c, time() - start_time, zerotol, benchmark, m, 1)
 
         if verbose and np.mod(iters, verbose) == 0:
             # If still running ADMM iterations, compute residuals
+            precompute((utilde-v)[n:-1], cone)
+
             r_utilde, r_u, r_v = _compute_r(utilde, u, v, cone, n, IplusQ)
             _r_utilde, _r_u, _r_v = np.linalg.norm(
                 r_utilde), np.linalg.norm(r_u), np.linalg.norm(r_v)
@@ -266,6 +287,8 @@ def newton_admm(data, cone, maxiters=100, admm_maxiters=1,
     for iters in range(maxiters):
         if benchmark is not None: 
             start_time = time()
+        # precompute terms for PSD projections
+        precompute((utilde-v)[n:-1], cone)
 
         # do newton step
         r_utilde, r_u, r_v = _compute_r(utilde, u, v, cone, n, IplusQ)
@@ -275,7 +298,7 @@ def newton_admm(data, cone, maxiters=100, admm_maxiters=1,
         # just for the understanding of the reader. 
         # d = np.array(utilde[-1] - v[-1] >=
         #              0.0).astype(np.float64).reshape(1, 1)
-        # D = block_diag(_J_onto_Kstar((utilde - v)[n:-1], cone)[0], 
+        # D = block_diag(J_onto_Kstar((utilde - v)[n:-1], cone)[0], 
         #                arrtype=sla.LinearOperator)
         # D_lo = block_diag([In, D, d], arrtype=sla.LinearOperator)
 
@@ -288,15 +311,17 @@ def newton_admm(data, cone, maxiters=100, admm_maxiters=1,
 
         d = np.array(utilde[-1] - v[-1] >=
                      0.0).astype(np.float64).reshape(1, 1)
-        J_cones, cone_lengths = _J_onto_Kstar((utilde - v)[n:-1], cone)
+        J_cones, cone_lengths = J_onto_Kstar((utilde - v)[n:-1], cone)
 
         J_lo = sla.LinearOperator((3 * k, 3 * k), matvec=
             lambda x: J_matvec(x, n, m, k, d, ridge, IplusQ, J_cones, cone_lengths))
         # approximately solve then newton step
+        nrestart = 20
         dall, info = sla.gmres(J_lo,
                                np.concatenate([r_utilde, r_u, r_v]),
                                M=M_lo,
                                tol=1e-12,
+                               restart=nrestart,
                                maxiter=gmres_maxiters(iters) + extra_iters)
 
         dutilde, du, dv = dall[0:k], dall[k:2 * k], dall[2 * k:]
@@ -309,6 +334,7 @@ def newton_admm(data, cone, maxiters=100, admm_maxiters=1,
             u0 = u - t * du
             v0 = v - t * dv
 
+            precompute((utilde0-v0)[n:-1], cone)
             r_utilde0, r_u0, r_v0 = _compute_r(
                 utilde0, u0, v0, cone, n, IplusQ)
 
@@ -327,7 +353,8 @@ def newton_admm(data, cone, maxiters=100, admm_maxiters=1,
         ridge *= 0.9
 
         if benchmark is not None: 
-            update_benchmark(b, u, v, c, time() - start_time, zerotol, benchmark, m)
+            update_benchmark(b, u, v, c, time() - start_time, zerotol,
+                benchmark, m, nrestart*(gmres_maxiters(iters) + extra_iters))
 
         if verbose and np.mod(iters, verbose) == 0:
             # If still running ADMM iterations, compute residuals

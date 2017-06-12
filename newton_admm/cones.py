@@ -181,8 +181,9 @@ def J_s(x, c_lens, precompute):
     assert len(c_lens) == len(precompute)
     for n,p in zip(c_lens, precompute):
         n0 = n * (n + 1) // 2
-        J = PSD.J(x[i:i + n0], p)
-        out.append(sla.aslinearoperator(J))
+        out.append(sla.LinearOperator((n0, n0), matvec=lambda v: PSD.J_fast(p,v)))
+        # J = PSD.J(x[i:i + n0], p)
+        # out.append(sla.aslinearoperator(J))
         i += n0
     assert i == len(x)
     return block_diag(out, arrtype=sla.LinearOperator)
